@@ -9,6 +9,7 @@ use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Local};
 use lazy_regex::regex;
 use reqwest::header;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::api::get_canvas_api;
 use crate::api::get_pages;
@@ -210,6 +211,19 @@ pub async fn process_files(
     Ok(())
 }
 
+fn find_nfc_equivalent(dir: &Path, target_nfc: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .find(|e| {
+            e.file_name()
+                .to_str()
+                .map(|s| s.nfc().collect::<String>() == target_nfc)
+                .unwrap_or(false)
+        })
+        .map(|e| e.path())
+}
+
 fn updated(filepath: &Path, new_modified: &str) -> bool {
     (|| -> Result<bool> {
         let old_modified = std::fs::metadata(filepath)?.modified()?;
@@ -227,8 +241,22 @@ pub fn filter_files(options: &ProcessOptions, path: &Path, files: Vec<File>) -> 
     files
         .into_iter()
         .map(|mut f| {
-            let sanitized_filename = sanitize_filename::sanitize(&f.display_name);
-            f.filepath = path.join(sanitized_filename);
+            let sanitized = sanitize_filename::sanitize(&f.display_name);
+            let nfc_name: String = sanitized.nfc().collect();
+            let mut filepath = path.join(&nfc_name);
+            // Canvas may hand back the same filename in different Unicode
+            // normalization forms across runs (e.g. NFC vs NFD for "ú"). On
+            // byte-level filesystems these are distinct entries. If the NFC
+            // path isn't present, probe the directory for any entry that is
+            // canonically equivalent and reuse its path so we don't create a
+            // duplicate.
+            if !nfc_name.is_ascii()
+                && !filepath.exists()
+                && let Some(existing) = find_nfc_equivalent(path, &nfc_name)
+            {
+                filepath = existing;
+            }
+            f.filepath = filepath;
             f
         })
         .filter(|f| !f.locked_for_user)
