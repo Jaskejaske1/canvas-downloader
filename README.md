@@ -9,8 +9,7 @@ This is a maintained fork of [this project](https://github.com/bnjmnt4n/canvas-d
 #### 🍺 Homebrew (macOS/Linux) <a href="https://repology.org/project/canvas-downloader/versions"> <img src="https://repology.org/badge/vertical-allrepos/canvas-downloader.svg" alt="Packaging status" align="right"> </a>
 
 ```bash
-brew tap aik2mlj/tap  # add custom tap
-brew install canvas-downloader
+brew install aik2mlj/tap/canvas-downloader
 ```
 
 #### 📦 AUR (Arch Linux)
@@ -25,8 +24,7 @@ paru -S canvas-downloader
 #### 🍦 Scoop (Windows)
 
 ```powershell
-scoop bucket add aik2mlj https://github.com/aik2mlj/scoop-bucket  # add custom bucket
-scoop install aik2mlj/canvas-downloader
+scoop bucket add aik2mlj https://github.com/aik2mlj/scoop-bucket; scoop install aik2mlj/canvas-downloader
 ```
 
 #### 🛠️ Cargo (All platforms)
