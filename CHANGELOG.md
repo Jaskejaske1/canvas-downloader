@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Module items under a `SubHeader` are now placed inside that subheader's folder instead of being flattened into the module folder. Files, pages, and `.url` shortcuts following a `SubHeader` are routed into a sibling section folder until the next `SubHeader`; ignored subheader folders also skip their contents.
+
 ## [0.4.1] - 2026-04-19
 
 ### Added

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result};
 
 use crate::api::get_pages;
-use crate::canvas::{ModuleItemResult, ModuleResult, ProcessOptions};
+use crate::canvas::{File, ModuleItemResult, ModuleResult, ProcessOptions};
 use crate::files::{filter_files, process_file_id};
 use crate::pages::process_page_body;
 use crate::utils::{create_folder_if_not_exist_or_ignored, get_raw_json_path, prettify_json};
@@ -124,11 +125,22 @@ async fn process_module_items(
 
         match items_result {
             Ok(ModuleItemResult::Ok(items)) => {
-                let mut files_to_process = Vec::new();
+                // Items in a Canvas module are returned as a flat list; a
+                // `SubHeader` item starts a section that owns every following
+                // item until the next `SubHeader`. `current_section` is the
+                // destination folder for the section we're currently in:
+                // `Some(path)` for items before any subheader, `Some(sub)`
+                // while inside a subheader, or `None` if the active subheader
+                // folder is ignored (skip its contents too).
+                let mut current_section: Option<PathBuf> = Some(path.clone());
+                let mut files_to_process: Vec<(PathBuf, File)> = Vec::new();
 
                 for item in items {
                     match item.item_type.as_str() {
                         "File" => {
+                            let Some(section_path) = current_section.as_ref() else {
+                                continue;
+                            };
                             if let Some(content_id) = item.content_id {
                                 let file_url = format!(
                                     "{}/api/v1/files/{}",
@@ -136,11 +148,14 @@ async fn process_module_items(
                                     content_id
                                 );
 
-                                match process_file_id((file_url, path.clone()), options.clone())
-                                    .await
+                                match process_file_id(
+                                    (file_url, section_path.clone()),
+                                    options.clone(),
+                                )
+                                .await
                                 {
                                     Ok(file) => {
-                                        files_to_process.push(file);
+                                        files_to_process.push((section_path.clone(), file));
                                     }
                                     Err(e) => {
                                         tracing::error!(
@@ -153,8 +168,12 @@ async fn process_module_items(
                             }
                         }
                         "Page" => {
+                            let Some(section_path) = current_section.as_ref() else {
+                                continue;
+                            };
                             if let Some(full_page_url) = item.url {
-                                let item_path = path.join(sanitize_filename::sanitize(&item.title));
+                                let item_path =
+                                    section_path.join(sanitize_filename::sanitize(&item.title));
                                 if !create_folder_if_not_exist_or_ignored(&item_path, &options)? {
                                     continue;
                                 }
@@ -186,8 +205,11 @@ async fn process_module_items(
                             }
                         }
                         "ExternalUrl" => {
+                            let Some(section_path) = current_section.as_ref() else {
+                                continue;
+                            };
                             if let Some(external_url) = &item.external_url {
-                                let url_file = path.join(format!(
+                                let url_file = section_path.join(format!(
                                     "{}.url",
                                     sanitize_filename::sanitize(&item.title)
                                 ));
@@ -198,12 +220,16 @@ async fn process_module_items(
                             }
                         }
                         "SubHeader" => {
-                            // SubHeaders are just organizational - create a folder
+                            // SubHeader starts a new section. Subheader folders
+                            // are siblings under the module folder, not nested
+                            // inside the previous section.
                             let subheader_path =
                                 path.join(sanitize_filename::sanitize(&item.title));
                             if !create_folder_if_not_exist_or_ignored(&subheader_path, &options)? {
+                                current_section = None;
                                 continue;
                             }
+                            current_section = Some(subheader_path);
                         }
                         _ => {
                             tracing::error!(
@@ -215,12 +241,21 @@ async fn process_module_items(
                     }
                 }
 
-                // Filter and add all collected files to download queue in one batch
+                // Group queued files by destination section, then filter each
+                // group against its own folder before extending the global
+                // download queue in one lock acquisition.
                 if !files_to_process.is_empty() {
-                    let filtered_files = filter_files(&options, &path, files_to_process);
-                    if !filtered_files.is_empty() {
+                    let mut by_section: HashMap<PathBuf, Vec<File>> = HashMap::new();
+                    for (section_path, file) in files_to_process {
+                        by_section.entry(section_path).or_default().push(file);
+                    }
+                    let mut all_filtered: Vec<File> = Vec::new();
+                    for (section_path, files) in by_section {
+                        all_filtered.extend(filter_files(&options, &section_path, files));
+                    }
+                    if !all_filtered.is_empty() {
                         let mut lock = options.files_to_download.lock().await;
-                        lock.extend(filtered_files);
+                        lock.extend(all_filtered);
                     }
                 }
             }
