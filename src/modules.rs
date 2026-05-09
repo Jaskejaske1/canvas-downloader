@@ -10,7 +10,7 @@ use crate::api::get_pages;
 use crate::canvas::{File, ModuleItemResult, ModuleResult, ProcessOptions};
 use crate::files::{filter_files, process_file_id};
 use crate::pages::process_page_body;
-use crate::utils::{create_folder_if_not_exist_or_ignored, get_raw_json_path, prettify_json};
+use crate::utils::{create_folder_if_not_exist_or_ignored, get_raw_json_path, join_if_different, prettify_json};
 
 pub async fn process_modules(
     (url, path): (String, PathBuf),
@@ -60,8 +60,8 @@ pub async fn process_modules(
 
                 for module in modules {
                     if let Some(ref modules_path) = modules_folder_path {
-                        let module_path =
-                            modules_path.join(sanitize_filename::sanitize(&module.name));
+                        let module_name = sanitize_filename::sanitize(&module.name);
+                        let module_path = join_if_different(modules_path, &module_name);
                         if !create_folder_if_not_exist_or_ignored(&module_path, &options)? {
                             continue;
                         }
@@ -136,6 +136,12 @@ async fn process_module_items(
                 let mut files_to_process: Vec<(PathBuf, File)> = Vec::new();
 
                 for item in items {
+                    // Skip preview items to avoid 401 Unauthorized errors
+                    if item.title.to_lowercase() == "preview"
+                        || item.url.as_ref().is_some_and(|u| u.ends_with("/preview"))
+                    {
+                        continue;
+                    }
                     match item.item_type.as_str() {
                         "File" => {
                             let Some(section_path) = current_section.as_ref() else {
@@ -172,8 +178,8 @@ async fn process_module_items(
                                 continue;
                             };
                             if let Some(full_page_url) = item.url {
-                                let item_path =
-                                    section_path.join(sanitize_filename::sanitize(&item.title));
+                                let item_title = sanitize_filename::sanitize(&item.title);
+                                let item_path = join_if_different(section_path, &item_title);
                                 if !create_folder_if_not_exist_or_ignored(&item_path, &options)? {
                                     continue;
                                 }
@@ -209,9 +215,10 @@ async fn process_module_items(
                                 continue;
                             };
                             if let Some(external_url) = &item.external_url {
+                                let item_title = sanitize_filename::sanitize(&item.title);
                                 let url_file = section_path.join(format!(
                                     "{}.url",
-                                    sanitize_filename::sanitize(&item.title)
+                                    item_title
                                 ));
                                 if let Ok(mut file) = std::fs::File::create(&url_file) {
                                     let _ = writeln!(file, "[InternetShortcut]");
@@ -223,8 +230,8 @@ async fn process_module_items(
                             // SubHeader starts a new section. Subheader folders
                             // are siblings under the module folder, not nested
                             // inside the previous section.
-                            let subheader_path =
-                                path.join(sanitize_filename::sanitize(&item.title));
+                            let item_title = sanitize_filename::sanitize(&item.title);
+                            let subheader_path = join_if_different(&path, &item_title);
                             if !create_folder_if_not_exist_or_ignored(&subheader_path, &options)? {
                                 current_section = None;
                                 continue;

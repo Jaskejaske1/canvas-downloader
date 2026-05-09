@@ -168,3 +168,13 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{:.2} {}", size, unit)
     }
 }
+
+/// Joins `name` to `parent` only if `name` differs from `parent`'s last component,
+/// preventing "L6 LCD/L6 LCD/"-style redundant nesting on Windows.
+pub fn join_if_different(parent: &Path, name: &str) -> PathBuf {
+    if parent.file_name().and_then(|n| n.to_str()) == Some(name) {
+        parent.to_path_buf()
+    } else {
+        parent.join(name)
+    }
+}

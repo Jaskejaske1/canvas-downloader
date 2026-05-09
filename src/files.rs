@@ -26,11 +26,13 @@ pub async fn atomic_download_file(file: File, options: Arc<ProcessOptions>) -> R
 
     // Aborted download?
     if let Err(e) = download_file((&tmp_path, &file), options.clone()).await {
-        if let Err(e) = std::fs::remove_file(&tmp_path) {
-            tracing::error!(
-                "Failed to remove temporary file {tmp_path:?} for {}, err={e:?}",
-                file.display_name
-            );
+        if tmp_path.exists() {
+            if let Err(e) = std::fs::remove_file(&tmp_path) {
+                tracing::error!(
+                    "Failed to remove temporary file {tmp_path:?} for {}, err={e:?}",
+                    file.display_name
+                );
+            }
         }
         return Err(e);
     }
@@ -260,6 +262,13 @@ pub fn filter_files(options: &ProcessOptions, path: &Path, files: Vec<File>) -> 
             f
         })
         .filter(|f| !f.locked_for_user)
+        .filter(|f| {
+            if f.display_name.to_lowercase() == "preview" || f.url.ends_with("/preview") {
+                tracing::debug!("Skipping preview file: {}", f.display_name);
+                return false;
+            }
+            true
+        })
         .filter(|f| {
             if DateTime::parse_from_rfc3339(&f.updated_at).is_ok() {
                 return true;
