@@ -2,51 +2,36 @@
 
 A command-line tool to download and organize all your Canvas course materials—files, syllabi, pages, modules, assignments, discussions, and announcements—into a clean local folder structure. Made in async Rust⚡.
 
-This is a maintained fork of [this project](https://github.com/bnjmnt4n/canvas-downloader). Also shout out to [this previous fork](https://github.com/rhgndf/canvas-downloader) that implements downloading additional materials.
+This is a hardened fork of [bnjmnt4n/canvas-downloader](https://github.com/bnjmnt4n/canvas-downloader) with critical stability improvements for Windows and long path safety.
+
+## Stability Improvements
+
+This fork includes battle-tested fixes that make the tool more robust, especially on Windows:
+
+- **Windows `MAX_PATH` Safe:** Intelligently flattens redundant double-folder nesting to avoid hitting path length limits.
+- **Universal Path Sanitization:** Safely sanitizes all module, folder, and item names used in path construction.
+- **Ghost File Prevention:** Actively skips hidden "preview" files before any HTTP request is made, preventing `401 Unauthorized` log spam.
+- **Graceful Failure:** Cleanly handles aborted downloads without leaving `.tmp` files or throwing `NotFound` cleanup errors.
 
 ## Installation
 
-#### 🍺 Homebrew (macOS/Linux) <a href="https://repology.org/project/canvas-downloader/versions"> <img src="https://repology.org/badge/vertical-allrepos/canvas-downloader.svg" alt="Packaging status" align="right"> </a>
-
-```bash
-brew install aik2mlj/tap/canvas-downloader
-```
-
-#### 📦 AUR (Arch Linux)
-
-```bash
-# use pre-built binary
-paru -S canvas-downloader-bin
-# or if you prefer, compile from source
-paru -S canvas-downloader
-```
-
-#### 🍦 Scoop (Windows)
-
-```powershell
-scoop bucket add aik2mlj https://github.com/aik2mlj/scoop-bucket; scoop install aik2mlj/canvas-downloader
-```
-
-#### 🛠️ Cargo (All platforms)
-
-```bash
-# use pre-built binary
-# you need to have cargo-binstall installed first
-cargo binstall canvas-downloader
-# or compile from source
-cargo install canvas-downloader
-```
-
 #### ⬇️ Download from Releases (All platforms)
 
-- Download the corresponding binary archive from [Releases](https://github.com/aik2mlj/canvas-downloader/releases)
-- Decompress the archive file
-- Directly run the executable from terminal, or move it to `$PATH` for easier access
+Download the corresponding binary archive from [Releases](https://github.com/Jaskejaske1/canvas-downloader/releases), decompress the archive, and run the executable directly or move it to `$PATH`.
 
-For macOS, the following commands may be needed because the binary isn't signed with an Apple developer account. Also see [Apple's official doc](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac?utm_source=chatgpt.com) on this.
+#### 🛠️ Build from Source (All platforms)
 
 ```bash
-# Remove quarantine attribute
+git clone https://github.com/Jaskejaske1/canvas-downloader.git
+cd canvas-downloader
+cargo build --release
+```
+
+The compiled binary will be at `target/release/canvas-downloader` (or `target/release/canvas-downloader.exe` on Windows).
+
+For macOS, you may need to remove the quarantine attribute before running:
+
+```bash
 xattr -d com.apple.quarantine canvas-downloader
 ```
 
@@ -54,7 +39,7 @@ xattr -d com.apple.quarantine canvas-downloader
 
 ### 1. Create Configuration File
 
-You can copy the [example config](examples/config.toml) into one of the **config file locations (searched in order):**
+Copy the [example config](examples/config.toml) into one of the **config file locations (searched in order):**
 
 1. Custom path via `--config` option
 1. `canvas-downloader.toml` in current directory
@@ -63,7 +48,7 @@ You can copy the [example config](examples/config.toml) into one of the **config
    - macOS: `~/.config/canvas-downloader/config.toml` or `~/Library/Application Support/canvas-downloader/config.toml`
    - Windows: `%APPDATA%\canvas-downloader\config.toml`
 
-Then modify it to your Canvas instance URL and access token.
+Then modify it with your Canvas instance URL and access token.
 
 #### How to get your token
 
@@ -111,7 +96,7 @@ $ canvas-downloader -t 115 -c CS1101S
 
 The tool will show you all files to be downloaded with their sizes, then ask for confirmation before proceeding. Downloads are organized by course, preserving Canvas's folder structure.
 
-> **Note:** Course name matching is exact match - use the exact course code (e.g., "CS1101S") or the exact course name as shown in the discovery step.
+> **Note:** Course name matching is exact match — use the exact course code (e.g., "CS1101S") or the exact course name as shown in the discovery step.
 
 ## What Gets Downloaded
 
@@ -122,7 +107,9 @@ The tool will show you all files to be downloaded with their sizes, then ask for
 - [x] Discussions and announcements (in HTML and JSON)
 - [x] Pages (in HTML and JSON)
 - [x] User information (in JSON)
-- [ ] Panopto lecture videos (seems still buggy)
+- [ ] Panopto lecture videos (experimental)
+
+Paths are cleanly flattened — redundant nesting (e.g. `.../L6 LCD/L6 LCD/...`) is automatically avoided, making the download structure more readable and helping on Windows systems with `MAX_PATH` limits.
 
 ## Common Workflows
 

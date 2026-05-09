@@ -2,6 +2,11 @@
 # Follows .gitignore pattern syntax
 # Patterns are matched relative to the destination folder (-d option)
 #
+# Note on folder structures:
+# This fork automatically flattens redundant folder names.
+# If Canvas has "Week 1 / Week 1 / slides.pdf", it saves locally as "Week 1 / slides.pdf".
+# Ensure your ignore rules target the flattened local structure!
+#
 # Put this under the current working directory or specify a custom path with the -i option
 
 # Ignore all PDF files
