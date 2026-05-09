@@ -368,7 +368,7 @@ async fn main() -> Result<()> {
         // Prep path and mkdir -p
         let course_folder_path = args
             .destination_folder
-            .join(course.course_code.replace('/', "_"));
+            .join(sanitize_filename::sanitize(&course.course_code));
         if !create_folder_if_not_exist_or_ignored(&course_folder_path, &options)? {
             continue;
         }
