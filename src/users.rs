@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 
 use crate::api::get_pages;
 use crate::canvas::ProcessOptions;
-use crate::utils::{get_raw_json_path, prettify_json};
+use crate::utils::{append_json_array_page, get_raw_json_path};
 
 pub async fn process_users(
     (url, parent_path): (String, PathBuf),
@@ -22,6 +22,17 @@ pub async fn process_users(
         url
     );
     let pages = get_pages(users_url, &options).await?;
+    let mut raw_users = Vec::new();
+
+    for page in pages {
+        if let Err(error) = append_json_array_page(&mut raw_users, &page.body) {
+            tracing::debug!(
+                "Unable to preserve raw users from {} (access may be restricted): {error}",
+                page.url
+            );
+            return Ok(());
+        }
+    }
 
     if let Some(users_path) = get_raw_json_path(
         &parent_path,
@@ -33,14 +44,9 @@ pub async fn process_users(
         let mut users_file = std::fs::File::create(users_path.clone())
             .with_context(|| format!("Unable to create file for {:?}", users_path_str))?;
 
-        for pg in pages {
-            let page_body = pg.body;
-
-            let pretty_json = prettify_json(&page_body).unwrap_or(page_body.clone());
-            users_file
-                .write_all(pretty_json.as_bytes())
-                .with_context(|| format!("Unable to write to file for {:?}", users_path_str))?;
-        }
+        users_file
+            .write_all(serde_json::to_string_pretty(&raw_users)?.as_bytes())
+            .with_context(|| format!("Unable to write to file for {:?}", users_path_str))?;
 
         tracing::debug!(
             "👥 Users saved for {}",

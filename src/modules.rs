@@ -13,7 +13,7 @@ use crate::files::{filter_files, process_file_id};
 use crate::pages::process_page_body;
 use crate::utils::{
     append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path,
-    output_name_with_id, prettify_json,
+    output_name_with_id,
 };
 
 fn write_url_shortcut(section_path: &Path, output_name: &str, url: &str) {
@@ -30,81 +30,68 @@ pub async fn process_modules(
 ) -> Result<()> {
     let modules_url = format!("{}modules", url);
     let pages = get_pages(modules_url, &options).await?;
-
-    let mut has_modules = false;
-    let mut modules_folder_path = None;
+    let mut modules = Vec::new();
+    let mut raw_modules = Vec::new();
 
     for page in pages {
         let module_body = page.body;
         let module_result = serde_json::from_str::<ModuleResult>(&module_body);
 
         match module_result {
-            Ok(ModuleResult::Ok(modules)) => {
-                if !modules.is_empty() && !has_modules {
-                    // Create modules folder only when we have actual modules
-                    let modules_path = path.join("modules");
-                    if !create_folder_if_not_exist_or_ignored(&modules_path, &options)? {
-                        continue;
-                    }
-                    modules_folder_path = Some(modules_path.clone());
-                    has_modules = true;
-
-                    // Create modules.json file
-                    if let Some(module_json) = get_raw_json_path(
-                        &path,
-                        "modules.json",
-                        &options.base_path,
-                        options.save_json,
-                    )? {
-                        let mut module_file = std::fs::File::create(module_json.clone())
-                            .with_context(|| {
-                                format!("Unable to create file for {:?}", module_json)
-                            })?;
-                        let pretty_json =
-                            prettify_json(&module_body).unwrap_or(module_body.clone());
-                        module_file
-                            .write_all(pretty_json.as_bytes())
-                            .with_context(|| {
-                                format!("Unable to write to file for {:?}", module_json)
-                            })?;
-                    }
-                }
-
-                for module in modules {
-                    if let Some(ref modules_path) = modules_folder_path {
-                        let module_path =
-                            modules_path.join(output_name_with_id(module.id, &module.name));
-                        if !create_folder_if_not_exist_or_ignored(&module_path, &options)? {
-                            continue;
-                        }
-
-                        fork!(
-                            process_module_items,
-                            (module.items_url, module_path),
-                            (String, PathBuf),
-                            options.clone()
-                        );
-                    }
-                }
+            Ok(ModuleResult::Ok(page_modules)) => {
+                append_json_array_page(&mut raw_modules, &module_body)
+                    .with_context(|| format!("Unable to preserve raw modules from {url}"))?;
+                modules.extend(page_modules);
             }
 
             Ok(ModuleResult::Err { status }) => {
-                tracing::error!("No modules found for url {} status: {}", url, status);
+                tracing::error!("Failed to access modules at {url}, status: {status}");
             }
 
             Err(e) => {
-                tracing::error!("No modules found for url {} error: {}", url, e);
+                tracing::error!("Unable to parse modules from {url}: {e}");
             }
         };
     }
 
-    if has_modules {
-        tracing::debug!(
-            "📦 Modules synced for {}",
-            path.file_name().unwrap_or_default().to_string_lossy()
-        );
-        options.n_modules.fetch_add(1, Ordering::Relaxed);
+    if modules.is_empty() {
+        return Ok(());
     }
+
+    let modules_path = path.join("modules");
+    if !create_folder_if_not_exist_or_ignored(&modules_path, &options)? {
+        return Ok(());
+    }
+
+    if let Some(module_json) =
+        get_raw_json_path(&path, "modules.json", &options.base_path, options.save_json)?
+    {
+        let mut module_file = std::fs::File::create(&module_json)
+            .with_context(|| format!("Unable to create file for {module_json:?}"))?;
+        module_file
+            .write_all(serde_json::to_string_pretty(&raw_modules)?.as_bytes())
+            .with_context(|| format!("Unable to write to file for {module_json:?}"))?;
+    }
+
+    for module in modules {
+        let module_path = modules_path.join(output_name_with_id(module.id, &module.name));
+        if !create_folder_if_not_exist_or_ignored(&module_path, &options)? {
+            continue;
+        }
+
+        fork!(
+            process_module_items,
+            (module.items_url, module_path),
+            (String, PathBuf),
+            options.clone()
+        );
+    }
+
+    tracing::debug!(
+        "📦 Modules synced for {}",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    );
+    options.n_modules.fetch_add(1, Ordering::Relaxed);
 
     Ok(())
 }

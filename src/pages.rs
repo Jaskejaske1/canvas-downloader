@@ -9,7 +9,8 @@ use crate::api::{get_canvas_api, get_pages};
 use crate::canvas::{PageBody, PageResult, ProcessOptions};
 use crate::html::process_html_links;
 use crate::utils::{
-    create_folder_if_not_exist_or_ignored, get_raw_json_path, output_name_with_id, prettify_json,
+    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path,
+    output_name_with_id, prettify_json,
 };
 
 pub async fn process_pages(
@@ -21,6 +22,7 @@ pub async fn process_pages(
 
     let mut has_pages = false;
     let mut pages_folder_path = None;
+    let mut raw_pages = Vec::new();
 
     for pg in pages {
         let uri = pg.url;
@@ -30,6 +32,8 @@ pub async fn process_pages(
 
         match page_result {
             Ok(PageResult::Ok(pages)) => {
+                append_json_array_page(&mut raw_pages, &page_body)
+                    .with_context(|| format!("Unable to preserve raw pages from {uri}"))?;
                 if !pages.is_empty() && !has_pages {
                     // Create pages folder only when we have actual pages
                     let pages_path = path.join("pages");
@@ -38,25 +42,6 @@ pub async fn process_pages(
                     }
                     pages_folder_path = Some(pages_path.clone());
                     has_pages = true;
-
-                    // Create pages.json file
-                    if let Some(pages_json_path) = get_raw_json_path(
-                        &path,
-                        "pages.json",
-                        &options.base_path,
-                        options.save_json,
-                    )? {
-                        let mut pages_file = std::fs::File::create(pages_json_path.clone())
-                            .with_context(|| {
-                                format!("Unable to create file for {:?}", pages_json_path)
-                            })?;
-                        let pretty_json = prettify_json(&page_body).unwrap_or(page_body.clone());
-                        pages_file
-                            .write_all(pretty_json.as_bytes())
-                            .with_context(|| {
-                                format!("Could not write to file {:?}", pages_json_path)
-                            })?;
-                    }
                 }
 
                 for page in pages {
@@ -83,6 +68,16 @@ pub async fn process_pages(
     }
 
     if has_pages {
+        if let Some(pages_json_path) =
+            get_raw_json_path(&path, "pages.json", &options.base_path, options.save_json)?
+        {
+            let mut pages_file = std::fs::File::create(&pages_json_path)
+                .with_context(|| format!("Unable to create file for {pages_json_path:?}"))?;
+            pages_file
+                .write_all(serde_json::to_string_pretty(&raw_pages)?.as_bytes())
+                .with_context(|| format!("Could not write to file {pages_json_path:?}"))?;
+        }
+
         tracing::debug!(
             "📄 Pages synced for {}",
             path.file_name().unwrap_or_default().to_string_lossy()

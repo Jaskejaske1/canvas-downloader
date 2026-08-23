@@ -158,9 +158,7 @@ async fn process_video_folder(
         &options.base_path,
         options.save_json,
     )?;
-    let mut sessions_file = sessions_json
-        .as_ref()
-        .and_then(|p| std::fs::File::create(p.clone()).ok());
+    let mut aggregated_sessions = None;
 
     for i in 0.. {
         let sessions_result = client
@@ -193,16 +191,12 @@ async fn process_video_folder(
             .await?;
 
         let sessions_text = sessions_result.text().await?;
-        if let Some(ref mut file) = sessions_file {
-            let pretty_json = prettify_json(&sessions_text).unwrap_or(sessions_text.clone());
-            file.write_all(pretty_json.as_bytes())?;
-        }
-
         let folder_sessions = serde_json::from_str::<serde_json::Value>(&sessions_text)?;
         let folder_sessions_results = folder_sessions
             .get("d")
             .ok_or(anyhow!("Could not get Panopto Folder Sessions"))?;
 
+        aggregate_panopto_page(&mut aggregated_sessions, folder_sessions.clone())?;
         let sessions =
             serde_json::from_value::<PanoptoSessionInfo>(folder_sessions_results.clone())?;
 
@@ -242,6 +236,32 @@ async fn process_video_folder(
             )
         }
     }
+    if let (Some(sessions_path), Some(aggregated)) = (sessions_json, aggregated_sessions) {
+        let mut file = std::fs::File::create(sessions_path)?;
+        file.write_all(serde_json::to_string_pretty(&aggregated)?.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn aggregate_panopto_page(
+    aggregate: &mut Option<serde_json::Value>,
+    page: serde_json::Value,
+) -> Result<()> {
+    if aggregate.is_none() {
+        *aggregate = Some(page);
+        return Ok(());
+    }
+
+    let page_results = page
+        .pointer("/d/Results")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("Panopto page has no Results array"))?;
+    let results = aggregate
+        .as_mut()
+        .and_then(|value| value.pointer_mut("/d/Results"))
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| anyhow!("aggregated Panopto response has no Results array"))?;
+    results.extend(page_results.iter().cloned());
     Ok(())
 }
 
@@ -389,4 +409,50 @@ async fn process_session(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aggregate_panopto_page;
+
+    #[test]
+    fn panopto_pages_append_results_and_keep_first_page_metadata() {
+        let mut aggregate = None;
+        aggregate_panopto_page(
+            &mut aggregate,
+            serde_json::json!({
+                "d": {
+                    "Results": [{"id": 1}],
+                    "Subfolders": [{"ID": "a"}],
+                    "TotalNumber": 2
+                }
+            }),
+        )
+        .expect("first page");
+        aggregate_panopto_page(
+            &mut aggregate,
+            serde_json::json!({"d": {"Results": [{"id": 2}], "Subfolders": []}}),
+        )
+        .expect("second page");
+
+        let value = aggregate.expect("aggregate");
+        assert_eq!(
+            value
+                .pointer("/d/Results")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            value.pointer("/d/TotalNumber").and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        assert_eq!(
+            value
+                .pointer("/d/Subfolders")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+    }
 }

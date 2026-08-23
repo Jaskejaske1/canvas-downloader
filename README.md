@@ -111,6 +111,8 @@ $ canvas-downloader -t 115 -c CS1101S
 
 The tool will show you all files to be downloaded with their sizes, then ask for confirmation before proceeding. Downloads are organized by course, preserving Canvas's folder structure.
 
+Generated path components include stable Canvas or Panopto IDs (for example, `<course-id>_<course-code>`). This keeps courses and resources with identical or sanitization-equivalent names from overwriting each other.
+
 > **Note:** Course name matching is exact match - use the exact course code (e.g., "CS1101S") or the exact course name as shown in the discovery step.
 
 ## What Gets Downloaded

@@ -11,13 +11,19 @@ use crate::canvas::{Discussion, DiscussionResult, DiscussionView, File, ProcessO
 use crate::files::filter_files;
 use crate::html::process_html_links;
 use crate::utils::{
-    create_folder_if_not_exist_or_ignored, get_raw_json_path, output_name_with_id, prettify_json,
+    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path,
+    output_name_with_id, prettify_json,
 };
 
 pub async fn process_discussions(
     (url, announcement, path): (String, bool, PathBuf),
     options: Arc<ProcessOptions>,
 ) -> Result<()> {
+    let folder_name = if announcement {
+        "announcements"
+    } else {
+        "discussions"
+    };
     let discussion_url = format!(
         "{}discussion_topics{}",
         url,
@@ -31,6 +37,7 @@ pub async fn process_discussions(
 
     let mut has_discussions = false;
     let mut discussions_folder_path = None;
+    let mut raw_discussions = Vec::new();
 
     for pg in pages {
         let uri = pg.url;
@@ -40,38 +47,16 @@ pub async fn process_discussions(
 
         match discussion_result {
             Ok(DiscussionResult::Ok(discussions)) => {
+                append_json_array_page(&mut raw_discussions, &page_body)
+                    .with_context(|| format!("Unable to preserve raw {folder_name} from {uri}"))?;
                 if !discussions.is_empty() && !has_discussions {
                     // Create discussions or announcements folder only when we have actual discussions
-                    let folder_name = if announcement {
-                        "announcements"
-                    } else {
-                        "discussions"
-                    };
                     let folder_path = path.join(folder_name);
                     if !create_folder_if_not_exist_or_ignored(&folder_path, &options)? {
                         continue;
                     }
                     discussions_folder_path = Some(folder_path.clone());
                     has_discussions = true;
-
-                    // Create discussions.json file
-                    if let Some(discussions_json_path) = get_raw_json_path(
-                        &path,
-                        &format!("{folder_name}.json"),
-                        &options.base_path,
-                        options.save_json,
-                    )? {
-                        let mut discussions_json_file =
-                            std::fs::File::create(discussions_json_path.clone()).with_context(
-                                || format!("Unable to create file for {:?}", discussions_json_path),
-                            )?;
-                        let pretty_json = prettify_json(&page_body).unwrap_or(page_body.clone());
-                        discussions_json_file
-                            .write_all(pretty_json.as_bytes())
-                            .with_context(|| {
-                                format!("Unable to write to file for {:?}", discussions_json_path)
-                            })?;
-                    }
                 }
 
                 for discussion in discussions {
@@ -129,6 +114,21 @@ pub async fn process_discussions(
     }
 
     if has_discussions {
+        if let Some(discussions_json_path) = get_raw_json_path(
+            &path,
+            &format!("{folder_name}.json"),
+            &options.base_path,
+            options.save_json,
+        )? {
+            let mut discussions_json_file = std::fs::File::create(&discussions_json_path)
+                .with_context(|| format!("Unable to create file for {discussions_json_path:?}"))?;
+            discussions_json_file
+                .write_all(serde_json::to_string_pretty(&raw_discussions)?.as_bytes())
+                .with_context(|| {
+                    format!("Unable to write to file for {discussions_json_path:?}")
+                })?;
+        }
+
         let course = path.file_name().unwrap_or_default().to_string_lossy();
         if announcement {
             tracing::debug!("📢 Announcements synced for {}", course);

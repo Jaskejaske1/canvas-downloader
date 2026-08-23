@@ -10,7 +10,8 @@ use crate::canvas::{Assignment, AssignmentResult, ProcessOptions, Submission};
 use crate::files::filter_files;
 use crate::html::process_html_links;
 use crate::utils::{
-    create_folder_if_not_exist_or_ignored, get_raw_json_path, output_name_with_id, prettify_json,
+    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path,
+    output_name_with_id, prettify_json,
 };
 
 pub async fn process_assignments(
@@ -25,6 +26,7 @@ pub async fn process_assignments(
 
     let mut has_assignments = false;
     let mut assignments_folder_path = None;
+    let mut raw_assignments = Vec::new();
 
     for pg in pages {
         let uri = pg.url;
@@ -34,6 +36,8 @@ pub async fn process_assignments(
 
         match assignment_result {
             Ok(AssignmentResult::Ok(assignments)) => {
+                append_json_array_page(&mut raw_assignments, &page_body)
+                    .with_context(|| format!("Unable to preserve raw assignments from {uri}"))?;
                 if !assignments.is_empty() && !has_assignments {
                     // Create assignments folder only when we have actual assignments
                     let folder_path = path.join("assignments");
@@ -42,25 +46,6 @@ pub async fn process_assignments(
                     }
                     assignments_folder_path = Some(folder_path.clone());
                     has_assignments = true;
-
-                    // Create assignments.json file
-                    if let Some(assignments_json_path) = get_raw_json_path(
-                        &path,
-                        "assignments.json",
-                        &options.base_path,
-                        options.save_json,
-                    )? {
-                        let mut assignments_json_file =
-                            std::fs::File::create(assignments_json_path.clone()).with_context(
-                                || format!("Unable to create file for {:?}", assignments_json_path),
-                            )?;
-                        let pretty_json = prettify_json(&page_body).unwrap_or(page_body.clone());
-                        assignments_json_file
-                            .write_all(pretty_json.as_bytes())
-                            .with_context(|| {
-                                format!("Unable to write to file for {:?}", assignments_json_path)
-                            })?;
-                    }
                 }
 
                 for assignment in assignments {
@@ -99,6 +84,21 @@ pub async fn process_assignments(
     }
 
     if has_assignments {
+        if let Some(assignments_json_path) = get_raw_json_path(
+            &path,
+            "assignments.json",
+            &options.base_path,
+            options.save_json,
+        )? {
+            let mut assignments_json_file = std::fs::File::create(&assignments_json_path)
+                .with_context(|| format!("Unable to create file for {assignments_json_path:?}"))?;
+            assignments_json_file
+                .write_all(serde_json::to_string_pretty(&raw_assignments)?.as_bytes())
+                .with_context(|| {
+                    format!("Unable to write to file for {assignments_json_path:?}")
+                })?;
+        }
+
         tracing::debug!(
             "📝 Assignments synced for {}",
             path.file_name().unwrap_or_default().to_string_lossy()
