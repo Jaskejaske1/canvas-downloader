@@ -33,14 +33,14 @@ use api::get_pages;
 use assignments::process_assignments;
 use canvas::ProcessOptions;
 use discussions::process_discussions;
-use files::{atomic_download_file, enforce_unique_destinations, process_folders};
+use files::{atomic_download_file, process_folders};
 use modules::process_modules;
 use pages::process_pages;
 use syllabus::process_syllabus;
 use users::process_users;
 use utils::{
-    create_folder_if_not_exist_or_ignored, format_bytes, ignored, output_name_with_id,
-    print_all_courses_by_term,
+    create_folder_if_not_exist_or_ignored, format_bytes, ignored, print_all_courses_by_term,
+    sanitize_path_component,
 };
 use videos::process_videos;
 
@@ -371,7 +371,7 @@ async fn main() -> Result<()> {
         // Prep path and mkdir -p
         let course_folder_path = args
             .destination_folder
-            .join(output_name_with_id(course.id, &course.course_code));
+            .join(sanitize_path_component(&course.course_code));
         if !create_folder_if_not_exist_or_ignored(&course_folder_path, &options)? {
             continue;
         }
@@ -450,8 +450,7 @@ async fn main() -> Result<()> {
     }
     println!();
 
-    let mut files_to_download = options.files_to_download.lock().await;
-    enforce_unique_destinations(&mut files_to_download)?;
+    let files_to_download = options.files_to_download.lock().await;
 
     if args.dry_run {
         // Dry run mode: just display what would be downloaded

@@ -7,16 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Breaking:** Generated course, content, folder, and file names now include stable Canvas or Panopto IDs. This prevents equal or sanitization-equivalent names from sharing an output path, but existing downloads and `.canvasignore` rules may need to be moved or updated.
-
 ### Fixed
 
 - Paginated Canvas response bodies are consumed immediately, avoiding timeouts caused by retaining earlier unconsumed responses while later pages load.
 - Module items retain `SubHeader` placement across API page boundaries.
 - Raw JSON summaries for assignments, discussions, announcements, modules, module items, pages, users, and Panopto sessions now contain every page as one valid JSON document in API order.
-- The completed download queue is deduplicated by destination and typed source identity; conflicting sources targeting one path now fail clearly instead of racing or overwriting.
 - Embedded resource failures include the URL and HTTP status, unsupported `HEAD` requests fall back to a range `GET`, and skipped links are reported as warnings.
 - Progress bars are configured before being added to `MultiProgress`, preventing concurrent rendering from briefly using a conflicting full-width style.
 

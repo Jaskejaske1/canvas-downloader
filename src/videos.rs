@@ -16,10 +16,7 @@ use serde_json::json;
 use crate::api::get_canvas_api;
 use crate::canvas::{File, PanoptoDeliveryInfo, PanoptoSessionInfo, ProcessOptions, Session};
 use crate::files::filter_files;
-use crate::utils::{
-    create_folder_if_not_exist_or_ignored, get_raw_json_path, output_directory_name_with_string_id,
-    output_name_with_string_id, prettify_json,
-};
+use crate::utils::{create_folder_if_not_exist_or_ignored, get_raw_json_path, prettify_json};
 
 pub async fn process_videos(
     (url, id, path): (String, u64, PathBuf),
@@ -203,10 +200,7 @@ async fn process_video_folder(
         // Subfolders are the same, so process only the first request
         if i == 0 {
             for subfolder in sessions.Subfolders {
-                let subfolder_path = path.join(output_directory_name_with_string_id(
-                    &subfolder.ID,
-                    &subfolder.Name,
-                ));
+                let subfolder_path = path.join(subfolder.Name);
                 if !create_folder_if_not_exist_or_ignored(&subfolder_path, &options)? {
                     continue;
                 }
@@ -363,12 +357,10 @@ async fn process_session(
                         uri_id,
                         file_uri
                     );
-                    let session_name =
-                        output_name_with_string_id(&result.DeliveryID, &result.SessionName);
                     let download_file_name = if file_uri_ext.is_empty() {
-                        session_name
+                        result.SessionName
                     } else {
-                        format!("{session_name}.{file_uri_ext}")
+                        format!("{}.{}", result.SessionName, file_uri_ext)
                     };
 
                     let date_match_rfc3339 = regex!(r"/Date\((\d+)\)/")

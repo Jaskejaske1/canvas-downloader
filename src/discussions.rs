@@ -11,8 +11,7 @@ use crate::canvas::{Discussion, DiscussionResult, DiscussionView, File, ProcessO
 use crate::files::filter_files;
 use crate::html::process_html_links;
 use crate::utils::{
-    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path,
-    output_name_with_id, prettify_json,
+    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path, prettify_json,
 };
 
 pub async fn process_discussions(
@@ -61,12 +60,19 @@ pub async fn process_discussions(
 
                 for discussion in discussions {
                     if let Some(ref folder_path) = discussions_folder_path {
-                        let discussion_name = discussion_output_name(&discussion);
-
                         // download attachments (TODO: not sure if this is needed)
-                        let discussion_folder_path = folder_path.join(&discussion_name);
+                        let discussion_folder_path =
+                            folder_path.join(sanitize_filename::sanitize(&discussion.title));
 
-                        let files: Vec<File> = discussion.attachments.clone();
+                        let files: Vec<File> = discussion
+                            .attachments
+                            .clone()
+                            .into_iter()
+                            .map(|mut f| {
+                                f.display_name = format!("{}_{}", f.id, &f.display_name);
+                                f
+                            })
+                            .collect();
                         let mut filtered_files =
                             filter_files(&options, &discussion_folder_path, files);
                         if !filtered_files.is_empty() {
@@ -85,7 +91,7 @@ pub async fn process_discussions(
                             (
                                 discussion.message.clone(),
                                 folder_path.clone(),
-                                discussion_name
+                                discussion.title.clone()
                             ),
                             (String, PathBuf, String),
                             options.clone()
@@ -249,10 +255,6 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-fn discussion_output_name(discussion: &Discussion) -> String {
-    output_name_with_id(discussion.id, &discussion.title)
-}
-
 async fn process_discussion_view(
     (url, path, discussion): (String, PathBuf, Discussion),
     options: Arc<ProcessOptions>,
@@ -260,7 +262,7 @@ async fn process_discussion_view(
     let resp = get_canvas_api(url.clone(), &options).await?;
     let discussion_view_body = resp.text().await?;
 
-    let discussion_name = discussion_output_name(&discussion);
+    let discussion_name = sanitize_filename::sanitize(&discussion.title);
     if let Some(discussion_view_json) = get_raw_json_path(
         &path,
         &format!("{discussion_name}.json"),
@@ -332,8 +334,15 @@ async fn process_discussion_view(
         }
     }
 
+    let files = attachments_all
+        .into_iter()
+        .map(|mut f| {
+            f.display_name = format!("{}_{}", f.id, &f.display_name);
+            f
+        })
+        .collect();
     let discussion_folder_path = path.join(discussion_name);
-    let mut filtered_files = filter_files(&options, &discussion_folder_path, attachments_all);
+    let mut filtered_files = filter_files(&options, &discussion_folder_path, files);
     if !filtered_files.is_empty() {
         // create folder for discussion if there are files to download
         create_folder_if_not_exist_or_ignored(&discussion_folder_path, &options)?;
