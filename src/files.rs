@@ -1,4 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::ops::Add;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,10 @@ use unicode_normalization::UnicodeNormalization;
 use crate::api::get_canvas_api;
 use crate::api::get_pages;
 use crate::canvas::{File, FileResult, FolderResult, ProcessOptions};
-use crate::utils::{create_folder_if_not_exist_or_ignored, ignored};
+use crate::utils::{
+    create_folder_if_not_exist_or_ignored, ignored, output_directory_name_with_id,
+    output_name_with_id, sanitize_path_component,
+};
 
 pub async fn atomic_download_file(file: File, options: Arc<ProcessOptions>) -> Result<()> {
     // Create tmp file from hash
@@ -126,11 +129,10 @@ pub async fn process_folders(
             Ok(FolderResult::Ok(folders)) => {
                 for folder in folders {
                     // println!("  * {} - {}", folder.id, folder.name);
-                    let sanitized_folder_name = sanitize_filename::sanitize(folder.name);
                     // if the folder has no parent, it is the root folder of a course
                     // so we avoid the extra directory nesting by not appending the root folder name
                     let folder_path = if folder.parent_folder_id.is_some() {
-                        path.join(sanitized_folder_name)
+                        path.join(output_directory_name_with_id(folder.id, &folder.name))
                     } else {
                         path.clone()
                     };
@@ -243,13 +245,25 @@ fn updated(filepath: &Path, new_modified: &str) -> bool {
     })()
     .unwrap_or(false)
 }
+
+fn output_file_name(id: u64, display_name: &str) -> String {
+    let name = if id == 0 {
+        sanitize_path_component(display_name)
+    } else {
+        output_name_with_id(id, display_name)
+    };
+    name.nfc().collect()
+}
+
 pub fn filter_files(options: &ProcessOptions, path: &Path, files: Vec<File>) -> Vec<File> {
     // only download files that do not exist or are updated
     files
         .into_iter()
         .map(|mut f| {
-            let sanitized = sanitize_filename::sanitize(&f.display_name);
-            let nfc_name: String = sanitized.nfc().collect();
+            let nfc_name = output_file_name(f.id, &f.display_name);
+            if f.id != 0 {
+                f.display_name = nfc_name.clone();
+            }
             let mut filepath = path.join(&nfc_name);
             // Canvas may hand back the same filename in different Unicode
             // normalization forms across runs (e.g. NFC vs NFD for "ú"). On
@@ -292,6 +306,49 @@ pub fn filter_files(options: &ProcessOptions, path: &Path, files: Vec<File>) -> 
         .collect()
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SourceIdentity {
+    CanvasFile(u64),
+    Url(String),
+}
+
+fn source_identity(file: &File) -> SourceIdentity {
+    if file.id != 0 {
+        return SourceIdentity::CanvasFile(file.id);
+    }
+
+    let normalized = reqwest::Url::parse(&file.url)
+        .map(|mut url| {
+            url.set_fragment(None);
+            url.to_string()
+        })
+        .unwrap_or_else(|_| file.url.split('#').next().unwrap_or(&file.url).to_string());
+    SourceIdentity::Url(normalized)
+}
+
+pub fn enforce_unique_destinations(files: &mut Vec<File>) -> Result<()> {
+    let mut destinations = HashMap::<PathBuf, SourceIdentity>::new();
+    let mut unique = Vec::with_capacity(files.len());
+
+    for file in files.drain(..) {
+        let identity = source_identity(&file);
+        match destinations.get(&file.filepath) {
+            Some(existing) if existing == &identity => {}
+            Some(existing) => anyhow::bail!(
+                "conflicting download destination {}: sources {existing:?} and {identity:?}",
+                file.filepath.display()
+            ),
+            None => {
+                destinations.insert(file.filepath.clone(), identity);
+                unique.push(file);
+            }
+        }
+    }
+
+    *files = unique;
+    Ok(())
+}
+
 pub async fn process_file_id(
     (url, path): (String, PathBuf),
     options: Arc<ProcessOptions>,
@@ -300,7 +357,7 @@ pub async fn process_file_id(
     let file_result = file_resp.json::<File>().await;
     match file_result {
         Ok(mut file) => {
-            let sanitized_filename = sanitize_filename::sanitize(&file.display_name);
+            let sanitized_filename = output_file_name(file.id, &file.display_name);
             let file_path = path.join(sanitized_filename);
             file.filepath = file_path;
             Ok(file)
@@ -388,7 +445,47 @@ fn filename_from_url(link: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::filename_from_url;
+    use super::{enforce_unique_destinations, filename_from_url, output_file_name};
+    use crate::canvas::File;
+
+    fn file(id: u64, url: &str, destination: &str) -> File {
+        File {
+            id,
+            folder_id: None,
+            display_name: "x".into(),
+            size: 1,
+            url: url.into(),
+            updated_at: "2020-01-01T00:00:00Z".into(),
+            locked_for_user: false,
+            filepath: destination.into(),
+        }
+    }
+
+    #[test]
+    fn canvas_file_names_include_one_stable_id() {
+        assert_eq!(output_file_name(42, "week/one"), "42_week_one");
+        assert_eq!(
+            output_file_name(42, "file_42_week/one"),
+            "42_file_42_week_one"
+        );
+        assert_eq!(output_file_name(0, "week/one"), "week_one");
+    }
+
+    #[test]
+    fn duplicate_sources_are_collapsed_but_conflicts_fail() {
+        let mut duplicates = vec![
+            file(7, "https://a/one?sig=1", "out"),
+            file(7, "https://a/two", "out"),
+        ];
+        enforce_unique_destinations(&mut duplicates).expect("same Canvas ID should deduplicate");
+        assert_eq!(duplicates.len(), 1);
+
+        let mut conflict = vec![
+            file(0, "https://a/image?variant=1", "img"),
+            file(0, "https://a/image?variant=2", "img"),
+        ];
+        assert!(enforce_unique_destinations(&mut conflict).is_err());
+    }
 
     #[test]
     fn fallback_filename_excludes_query_and_fragment() {

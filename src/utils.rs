@@ -17,6 +17,24 @@ pub fn sanitize_path_component(name: &str) -> String {
     )
 }
 
+pub fn output_name_with_id(id: u64, name: &str) -> String {
+    sanitize_path_component(&format!("{id}_{name}"))
+}
+
+pub fn output_directory_name_with_id(id: u64, name: &str) -> String {
+    sanitize_path_component(&format!("d{id}_{name}"))
+}
+
+pub fn output_name_with_string_id(id: &str, name: &str) -> String {
+    let id = sanitize_path_component(id);
+    sanitize_path_component(&format!("{id}_{name}"))
+}
+
+pub fn output_directory_name_with_string_id(id: &str, name: &str) -> String {
+    let id = sanitize_path_component(id);
+    sanitize_path_component(&format!("d{id}_{name}"))
+}
+
 pub fn print_all_courses_by_term(courses: &[Course]) {
     let mut grouped_courses: HashMap<u64, Vec<(&str, &str)>> = HashMap::new();
 
@@ -193,7 +211,11 @@ pub fn format_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_json_array_page, sanitize_path_component};
+    use super::{
+        append_json_array_page, output_directory_name_with_id,
+        output_directory_name_with_string_id, output_name_with_id, output_name_with_string_id,
+        sanitize_path_component,
+    };
 
     #[test]
     fn path_components_are_sanitized_consistently_across_platforms() {
@@ -203,6 +225,26 @@ mod tests {
         );
         assert_eq!(sanitize_path_component("CON"), "_");
         assert_eq!(sanitize_path_component("Course. "), "Course_");
+    }
+
+    #[test]
+    fn stable_ids_disambiguate_sanitization_equivalent_names() {
+        assert_ne!(
+            output_name_with_id(17, "BIO/101"),
+            output_name_with_id(18, "BIO101")
+        );
+        assert_eq!(
+            output_directory_name_with_id(23, "Week/One"),
+            "d23_Week_One"
+        );
+        assert_eq!(
+            output_name_with_string_id("delivery/17", "Lecture/One"),
+            "delivery_17_Lecture_One"
+        );
+        assert_eq!(
+            output_directory_name_with_string_id("folder/17", "Lectures/2026"),
+            "dfolder_17_Lectures_2026"
+        );
     }
 
     #[test]

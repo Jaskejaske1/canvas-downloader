@@ -12,11 +12,12 @@ use crate::canvas::{File, ModuleItemResult, ModuleResult, ProcessOptions};
 use crate::files::{filter_files, process_file_id};
 use crate::pages::process_page_body;
 use crate::utils::{
-    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path, prettify_json,
+    append_json_array_page, create_folder_if_not_exist_or_ignored, get_raw_json_path,
+    output_name_with_id, prettify_json,
 };
 
-fn write_url_shortcut(section_path: &Path, title: &str, url: &str) {
-    let url_file = section_path.join(format!("{}.url", sanitize_filename::sanitize(title)));
+fn write_url_shortcut(section_path: &Path, output_name: &str, url: &str) {
+    let url_file = section_path.join(format!("{output_name}.url"));
     if let Ok(mut file) = std::fs::File::create(&url_file) {
         let _ = writeln!(file, "[InternetShortcut]");
         let _ = writeln!(file, "URL={}", url);
@@ -72,7 +73,7 @@ pub async fn process_modules(
                 for module in modules {
                     if let Some(ref modules_path) = modules_folder_path {
                         let module_path =
-                            modules_path.join(sanitize_filename::sanitize(&module.name));
+                            modules_path.join(output_name_with_id(module.id, &module.name));
                         if !create_folder_if_not_exist_or_ignored(&module_path, &options)? {
                             continue;
                         }
@@ -162,6 +163,7 @@ async fn process_module_items(
     let mut files_to_process: Vec<(PathBuf, File)> = Vec::new();
 
     for item in items {
+        let item_name = output_name_with_id(item.id, &item.title);
         match item.item_type.as_str() {
             "File" => {
                 let Some(section_path) = current_section.as_ref() else {
@@ -187,15 +189,15 @@ async fn process_module_items(
                     continue;
                 };
                 if let Some(full_page_url) = item.url {
-                    let item_path = section_path.join(sanitize_filename::sanitize(&item.title));
+                    let item_path = section_path.join(&item_name);
                     if !create_folder_if_not_exist_or_ignored(&item_path, &options)? {
                         continue;
                     }
 
                     fork!(
                         process_page_body,
-                        (full_page_url, item.title, item_path),
-                        (String, String, PathBuf),
+                        (full_page_url, item_path),
+                        (String, PathBuf),
                         options.clone()
                     );
                 }
@@ -223,7 +225,7 @@ async fn process_module_items(
                     continue;
                 };
                 if let Some(external_url) = &item.external_url {
-                    write_url_shortcut(section_path, &item.title, external_url);
+                    write_url_shortcut(section_path, &item_name, external_url);
                 }
             }
             "Quiz" => {
@@ -231,11 +233,11 @@ async fn process_module_items(
                     continue;
                 };
                 if let Some(quiz_url) = item.html_url.as_deref().or(item.url.as_deref()) {
-                    write_url_shortcut(section_path, &item.title, quiz_url);
+                    write_url_shortcut(section_path, &item_name, quiz_url);
                 }
             }
             "SubHeader" => {
-                let subheader_path = path.join(sanitize_filename::sanitize(&item.title));
+                let subheader_path = path.join(item_name);
                 if !create_folder_if_not_exist_or_ignored(&subheader_path, &options)? {
                     current_section = None;
                     continue;
