@@ -132,6 +132,15 @@ pub fn prettify_json(json_str: &str) -> Result<String> {
     Ok(serde_json::to_string_pretty(&value)?)
 }
 
+pub fn append_json_array_page(
+    aggregate: &mut Vec<serde_json::Value>,
+    body: &str,
+) -> serde_json::Result<()> {
+    let mut page = serde_json::from_str::<Vec<serde_json::Value>>(body)?;
+    aggregate.append(&mut page);
+    Ok(())
+}
+
 /// Get the path for a raw JSON file in a parallel "raw" folder structure
 /// Returns None if save_json is false
 ///
@@ -184,7 +193,7 @@ pub fn format_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_path_component;
+    use super::{append_json_array_page, sanitize_path_component};
 
     #[test]
     fn path_components_are_sanitized_consistently_across_platforms() {
@@ -194,5 +203,30 @@ mod tests {
         );
         assert_eq!(sanitize_path_component("CON"), "_");
         assert_eq!(sanitize_path_component("Course. "), "Course_");
+    }
+
+    #[test]
+    fn json_array_pages_preserve_order_and_unknown_fields() {
+        let mut aggregate = Vec::new();
+        append_json_array_page(
+            &mut aggregate,
+            r#"[{"id":1,"unknown":{"kept":true}},{"id":2}]"#,
+        )
+        .expect("first page");
+        append_json_array_page(&mut aggregate, r#"[{"id":3}]"#).expect("second page");
+
+        assert_eq!(
+            aggregate
+                .iter()
+                .map(|item| item["id"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3)]
+        );
+        assert_eq!(aggregate[0]["unknown"]["kept"], true);
+    }
+
+    #[test]
+    fn json_array_pages_reject_non_arrays() {
+        assert!(append_json_array_page(&mut Vec::new(), r#"{"id":1}"#).is_err());
     }
 }

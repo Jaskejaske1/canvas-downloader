@@ -7,7 +7,12 @@ use std::time::Duration;
 const CANVAS_API_TIMEOUT: Duration = Duration::from_secs(60);
 const CANVAS_API_RETRIES: u32 = 3;
 
-pub async fn get_pages(link: String, options: &ProcessOptions) -> Result<Vec<Response>> {
+pub struct ApiPage {
+    pub url: String,
+    pub body: String,
+}
+
+pub async fn get_pages(link: String, options: &ProcessOptions) -> Result<Vec<ApiPage>> {
     fn parse_next_page(resp: &Response) -> Result<Option<String>> {
         // Parse LINK header
         let Some(links) = resp
@@ -27,18 +32,25 @@ pub async fn get_pages(link: String, options: &ProcessOptions) -> Result<Vec<Res
     }
 
     let mut link = Some(link);
-    let mut resps = Vec::new();
+    let mut pages = Vec::new();
 
     while let Some(uri) = link {
         // GET request
         let resp = get_canvas_api(uri, options).await?;
 
-        // Get next page before returning for json
+        // Read the pagination header before consuming the response, then read
+        // the body immediately. Holding several unconsumed responses can make
+        // an earlier request hit its total timeout while later pages load.
         link = parse_next_page(&resp)?;
-        resps.push(resp);
+        let url = resp.url().to_string();
+        let body = resp
+            .text()
+            .await
+            .with_context(|| format!("Unable to read paginated Canvas response from {url}"))?;
+        pages.push(ApiPage { url, body });
     }
 
-    Ok(resps)
+    Ok(pages)
 }
 
 pub async fn get_canvas_api(url: String, options: &ProcessOptions) -> Result<Response> {

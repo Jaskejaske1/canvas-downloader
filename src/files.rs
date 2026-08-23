@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use lazy_regex::regex;
 use reqwest::header;
@@ -26,7 +26,9 @@ pub async fn atomic_download_file(file: File, options: Arc<ProcessOptions>) -> R
 
     // Aborted download?
     if let Err(e) = download_file((&tmp_path, &file), options.clone()).await {
-        if let Err(e) = std::fs::remove_file(&tmp_path) {
+        if let Err(e) = std::fs::remove_file(&tmp_path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
             tracing::error!(
                 "Failed to remove temporary file {tmp_path:?} for {}, err={e:?}",
                 file.display_name
@@ -67,10 +69,12 @@ async fn download_file(
         .await
         .with_context(|| format!("Something went wrong when reaching {}", canvas_file.url))?;
     if !resp.status().is_success() {
-        return Err(Error::msg(format!(
-            "Failed to download {}, got {resp:?}",
-            canvas_file.display_name
-        )));
+        anyhow::bail!(
+            "Failed to download {} from {}: HTTP {}",
+            canvas_file.display_name,
+            canvas_file.url,
+            resp.status()
+        );
     }
 
     // Create + Open file
@@ -84,11 +88,14 @@ async fn download_file(
         .and_then(|ct_len| ct_len.to_str().ok()) // Unwraps the Option as &str
         .and_then(|ct_len| ct_len.parse().ok()) // Parses the Option as u64
         .unwrap_or(0); // Fallback to 0
-    let progress_bar = options
-        .progress_bars
-        .add(indicatif::ProgressBar::new(download_size));
+    // Configure the bar while hidden. Adding a full-width default bar before
+    // applying our style can race with MultiProgress rendering and corrupt
+    // cursor-based redraws.
+    let progress_bar = indicatif::ProgressBar::hidden();
+    progress_bar.set_length(download_size);
     progress_bar.set_message(canvas_file.display_name.to_string());
     progress_bar.set_style(options.progress_style.clone());
+    let progress_bar = options.progress_bars.add(progress_bar);
 
     // Download
     while let Some(chunk) = resp.chunk().await? {
@@ -111,8 +118,8 @@ pub async fn process_folders(
 
     // For each page
     for pg in pages {
-        let uri = pg.url().to_string();
-        let folders_result = pg.json::<FolderResult>().await;
+        let uri = pg.url;
+        let folders_result = serde_json::from_str::<FolderResult>(&pg.body);
 
         match folders_result {
             // Got folders
@@ -180,8 +187,8 @@ pub async fn process_files(
 
     // For each page
     for pg in pages {
-        let uri = pg.url().to_string();
-        let files_result = pg.json::<FileResult>().await;
+        let uri = pg.url;
+        let files_result = serde_json::from_str::<FileResult>(&pg.body);
 
         match files_result {
             // Got files
@@ -308,28 +315,41 @@ pub async fn prepare_link_for_download(
     (link, path): (String, PathBuf),
     options: Arc<ProcessOptions>,
 ) -> Result<File> {
-    let resp = options
+    let mut resp = options
         .client
         .head(&link)
         .bearer_auth(&options.canvas_token)
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
+    if matches!(
+        resp.status(),
+        reqwest::StatusCode::METHOD_NOT_ALLOWED | reqwest::StatusCode::NOT_IMPLEMENTED
+    ) {
+        resp = options
+            .client
+            .get(&link)
+            .header(header::RANGE, "bytes=0-0")
+            .bearer_auth(&options.canvas_token)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+    }
+    if !resp.status().is_success() {
+        anyhow::bail!(
+            "Unable to inspect embedded file {link}: HTTP {}",
+            resp.status()
+        );
+    }
     let headers = resp.headers();
     // get filename out of Content-Disposition header
     let filename = headers
         .get(header::CONTENT_DISPOSITION)
         .and_then(|x| x.to_str().ok())
-        .and_then(|x| regex!(r#"filename="(.*)""#).captures(x))
+        .and_then(|x| regex!(r#"filename="([^"]+)""#).captures(x))
         .and_then(|x| x.get(1))
-        .map(|x| x.as_str())
-        .unwrap_or_else(|| {
-            regex!(r"/([^/]+)$")
-                .captures(&link)
-                .and_then(|x| x.get(1))
-                .map(|x| x.as_str())
-                .unwrap_or("unknown")
-        });
+        .map(|x| x.as_str().to_string())
+        .unwrap_or_else(|| filename_from_url(&link));
     // last-modified header to TZ string
     let updated_at = headers
         .get(header::LAST_MODIFIED)
@@ -340,11 +360,11 @@ pub async fn prepare_link_for_download(
         })
         .unwrap_or_else(|| Local::now().to_rfc3339());
 
-    let sanitized_filename = sanitize_filename::sanitize(filename);
+    let sanitized_filename = sanitize_filename::sanitize(&filename);
     let file = File {
         id: 0,
         folder_id: None,
-        display_name: filename.to_string(),
+        display_name: filename,
         size: 0,
         url: link.clone(),
         updated_at,
@@ -352,4 +372,38 @@ pub async fn prepare_link_for_download(
         filepath: path.join(sanitized_filename),
     };
     Ok(file)
+}
+
+fn filename_from_url(link: &str) -> String {
+    reqwest::Url::parse(link)
+        .ok()
+        .and_then(|url| {
+            url.path_segments()?
+                .rev()
+                .find(|segment| !segment.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filename_from_url;
+
+    #[test]
+    fn fallback_filename_excludes_query_and_fragment() {
+        assert_eq!(
+            filename_from_url("https://canvas.example/files/42/download?hidden=1#preview"),
+            "download"
+        );
+    }
+
+    #[test]
+    fn fallback_filename_uses_last_nonempty_path_segment() {
+        assert_eq!(
+            filename_from_url("https://canvas.example/images/avatar.png/"),
+            "avatar.png"
+        );
+        assert_eq!(filename_from_url("not a URL"), "unknown");
+    }
 }

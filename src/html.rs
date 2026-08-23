@@ -42,7 +42,13 @@ pub async fn process_html_links(
     )
     .await
     .into_iter()
-    .filter_map(|x| x.ok())
+    .filter_map(|result| match result {
+        Ok(file) => Some(file),
+        Err(error) => {
+            tracing::warn!("Skipping embedded Canvas file: {error:#}");
+            None
+        }
+    })
     .collect::<Vec<File>>();
 
     // If image is from canvas it is likely the file url gives permission denied, so download from the CDN
@@ -62,7 +68,13 @@ pub async fn process_html_links(
         )
         .await
         .into_iter()
-        .filter_map(|x| x.ok())
+        .filter_map(|result| match result {
+            Ok(file) => Some(file),
+            Err(error) => {
+                tracing::warn!("Skipping embedded image: {error:#}");
+                None
+            }
+        })
         .collect::<Vec<File>>()
         .as_mut(),
     );
