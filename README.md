@@ -147,6 +147,12 @@ $ canvas-downloader -t 115 -n
 
 By default, existing local files won't be overwritten even if Canvas has newer versions.
 
+For unattended or scheduled runs, add `-y` / `--yes` to skip the interactive confirmation prompt:
+
+```shell
+$ canvas-downloader -c CS1101S -n -y
+```
+
 ### Choose Download Location
 
 Specify a custom folder with `-d`:
@@ -181,6 +187,7 @@ Options:
       --dry-run                      Preview downloads without executing
       --no-raw                       Do not save raw JSON responses
       --no-submissions               Do not download assignment submission files
+  -y, --yes                          Skip the interactive download confirmation
   -v, --verbose                      Enable debug logging
   -h, --help                         Print help
   -V, --version                      Print version
