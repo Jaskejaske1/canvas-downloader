@@ -121,6 +121,9 @@ struct CommandLineOptions {
     #[arg(long, help = "Do not download assignment submission files")]
     no_submissions: bool,
 
+    #[arg(short = 'y', long, help = "Skip the interactive download confirmation")]
+    yes: bool,
+
     #[arg(short = 'v', long, help = "Enable debug logging")]
     verbose: bool,
 }
@@ -542,22 +545,24 @@ async fn main() -> Result<()> {
             format_bytes(total_size)
         );
 
-        // Ask for confirmation
-        print!("Proceed with download? [y]/n: ");
-        std::io::Write::flush(&mut std::io::stdout()).expect("Failed to flush stdout");
+        if !args.yes {
+            // Ask for confirmation unless the caller explicitly requested unattended mode.
+            print!("Proceed with download? [y]/n: ");
+            std::io::Write::flush(&mut std::io::stdout()).expect("Failed to flush stdout");
 
-        let mut input = String::new();
-        std::io::stdin()
-            .read_line(&mut input)
-            .expect("Failed to read user input");
+            let mut input = String::new();
+            std::io::stdin()
+                .read_line(&mut input)
+                .expect("Failed to read user input");
 
-        let input = input.trim().to_lowercase();
-        if !input.is_empty() && input != "y" && input != "yes" {
-            println!("Download cancelled.");
-            return Ok(());
+            let input = input.trim().to_lowercase();
+            if !input.is_empty() && input != "y" && input != "yes" {
+                println!("Download cancelled.");
+                return Ok(());
+            }
+
+            println!();
         }
-
-        println!();
         println!("Starting download...");
 
         // Download files
