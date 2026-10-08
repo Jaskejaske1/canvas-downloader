@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 
 use crate::api::get_canvas_api;
 use crate::canvas::{ProcessOptions, Syllabus};
+use crate::html::process_html_links;
 use crate::utils::{get_raw_json_path, prettify_json};
 
 pub async fn process_syllabus(
@@ -68,6 +69,13 @@ pub async fn process_syllabus(
                         .with_context(|| {
                             format!("Could not write to file {:?}", syllabus_html_path)
                         })?;
+
+                    fork!(
+                        process_html_links,
+                        (syllabus_html, path, "syllabus".to_string()),
+                        (String, PathBuf, String),
+                        options.clone()
+                    );
 
                     tracing::debug!("📜 Syllabus synced for {}", syllabus.course_code);
                     options.n_syllabi.fetch_add(1, Ordering::Relaxed);

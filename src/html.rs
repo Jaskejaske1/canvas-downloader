@@ -19,21 +19,43 @@ pub async fn process_html_links(
     options: Arc<ProcessOptions>,
 ) -> Result<()> {
     let destination_path = path.join(sanitize_filename::sanitize(&folder_name));
-    // If file link is part of course files
+
+    // Canvas course files can appear as normal links or as image preview URLs.
+    // Resolve both through the File API so we get the canonical filename,
+    // metadata and download URL.
     let re = regex!(r"/courses/[0-9]+/files/([0-9]+)");
-    let file_links = Document::from(html.as_str())
+
+    let mut file_links = Document::from(html.as_str())
         .find(Name("a"))
         .filter_map(|n| n.attr("href"))
         .filter(|x| x.starts_with(&options.canvas_url))
         .filter_map(|x| Url::parse(x).ok())
-        .filter(|x| re.is_match(x.path()))
         .filter_map(|x| {
-            // Extract file ID and use the correct Canvas API endpoint
             re.captures(x.path())
                 .and_then(|cap| cap.get(1))
                 .map(|file_id| format!("{}/api/v1/files/{}", options.canvas_url, file_id.as_str()))
         })
         .collect::<Vec<String>>();
+
+    file_links.extend(
+        Document::from(html.as_str())
+            .find(Name("img"))
+            .filter_map(|n| n.attr("src"))
+            .filter(|x| x.starts_with(&options.canvas_url))
+            .filter_map(|x| Url::parse(x).ok())
+            .filter_map(|x| {
+                re.captures(x.path())
+                    .and_then(|cap| cap.get(1))
+                    .map(|file_id| {
+                        format!("{}/api/v1/files/{}", options.canvas_url, file_id.as_str())
+                    })
+            }),
+    );
+
+    // The same Canvas file can be referenced multiple times in one HTML body.
+    // Queue each file ID only once to avoid concurrent writes to the same path.
+    file_links.sort_unstable();
+    file_links.dedup();
 
     let mut link_files = join_all(
         file_links
@@ -51,14 +73,20 @@ pub async fn process_html_links(
     })
     .collect::<Vec<File>>();
 
-    // If image is from canvas it is likely the file url gives permission denied, so download from the CDN
-    let image_links = Document::from(html.as_str())
+    // Other Canvas-hosted images that are not course File objects are downloaded
+    // from their original URL.
+    let mut image_links = Document::from(html.as_str())
         .find(Name("img"))
         .filter_map(|n| n.attr("src"))
         .filter(|x| x.starts_with(&options.canvas_url))
         .filter(|x| !x.contains("equation_images"))
+        .filter_map(|x| Url::parse(x).ok())
+        .filter(|x| !re.is_match(x.path()))
         .map(|x| x.to_string())
         .collect::<Vec<String>>();
+
+    image_links.sort_unstable();
+    image_links.dedup();
 
     link_files.append(
         join_all(
