@@ -6,7 +6,7 @@ This is a maintained fork of [this project](https://github.com/bnjmnt4n/canvas-d
 
 ## Installation
 
-#### 🍺 Homebrew (macOS/Linux) <a href="https://repology.org/project/canvas-downloader/versions"> <img src="https://repology.org/badge/vertical-allrepos/canvas-downloader.svg" alt="Packaging status" align="right"> </a>
+#### 🍺 Homebrew (macOS/Linux)
 
 ```bash
 brew install aik2mlj/tap/canvas-downloader
@@ -17,14 +17,16 @@ brew install aik2mlj/tap/canvas-downloader
 ```bash
 # use pre-built binary
 paru -S canvas-downloader-bin
-# or if you prefer, compile from source
+
+# or compile from source
 paru -S canvas-downloader
 ```
 
 #### 🍦 Scoop (Windows)
 
 ```powershell
-scoop bucket add aik2mlj https://github.com/aik2mlj/scoop-bucket; scoop install aik2mlj/canvas-downloader
+scoop bucket add aik2mlj https://github.com/aik2mlj/scoop-bucket
+scoop install aik2mlj/canvas-downloader
 ```
 
 #### 🛠️ Cargo (All platforms)
@@ -33,20 +35,22 @@ scoop bucket add aik2mlj https://github.com/aik2mlj/scoop-bucket; scoop install 
 # use pre-built binary
 # you need to have cargo-binstall installed first
 cargo binstall canvas-downloader
+
 # or compile from source
 cargo install canvas-downloader
 ```
+
+Windows source builds may also require CMake and NASM because of native TLS dependencies.
 
 #### ⬇️ Download from Releases (All platforms)
 
 - Download the corresponding binary archive from [Releases](https://github.com/aik2mlj/canvas-downloader/releases)
 - Decompress the archive file
-- Directly run the executable from terminal, or move it to `$PATH` for easier access
+- Run the executable directly or move it to `$PATH`
 
-For macOS, the following commands may be needed because the binary isn't signed with an Apple developer account. Also see [Apple's official doc](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac?utm_source=chatgpt.com) on this.
+For macOS, the following command may be needed because the binary is not signed with an Apple developer account:
 
 ```bash
-# Remove quarantine attribute
 xattr -d com.apple.quarantine canvas-downloader
 ```
 
@@ -54,134 +58,163 @@ xattr -d com.apple.quarantine canvas-downloader
 
 ### 1. Create Configuration File
 
-You can copy the [example config](examples/config.toml) into one of the **config file locations (searched in order):**
+You can copy the [example config](examples/config.toml) into one of the configuration file locations searched in order:
 
-1. Custom path via `--config` option
-1. `canvas-downloader.toml` in current directory
-1. `config.toml` in platform-specific config directory:
+1. Custom path via `--config`
+2. `canvas-downloader.toml` in the current directory
+3. Platform-specific config directory:
    - Linux: `~/.config/canvas-downloader/config.toml`
    - macOS: `~/.config/canvas-downloader/config.toml` or `~/Library/Application Support/canvas-downloader/config.toml`
    - Windows: `%APPDATA%\canvas-downloader\config.toml`
 
-Then modify it to your Canvas instance URL and access token.
+Then set your Canvas instance URL and access token.
 
 #### How to get your token
 
-- Log in to Canvas → Account → Settings → **New Access Token**
+Log in to Canvas → Account → Settings → **New Access Token**.
 
 ### 2. Discover Your Courses
 
-Run the tool to see which courses are available:
+Run the tool without course filters:
 
 ```shell
-$ canvas-downloader
-Please provide either Term ID(s) via -t or course name(s)/code(s) via -c
-Term ID    | Course Code | Course Name
------------------------------------------------------------
-115        | CS1101S     | Programming Methodology
-           | CS1231S     | Discrete Structures
------------------------------------------------------------
-120        | CS2040S     | Data Structures and Algorithms
-           | CS2030      | Programming Methodology II
------------------------------------------------------------
-125        | CS3230      | Design and Analysis of Algorithms
+canvas-downloader
 ```
+
+It will list available terms, course codes, and course names.
 
 ### 3. Download Your Courses
 
-You can download courses by term ID or by course name/code:
-
-**Download by terms (all courses in specific terms):**
+Download by term:
 
 ```shell
-$ canvas-downloader -t 115 120
+canvas-downloader -t 115 120
 ```
 
-**Download by course names and/or codes (specific courses only):**
+Download specific courses:
 
 ```shell
-$ canvas-downloader -c CS1101S "Introduction to Data Structures"
+canvas-downloader -c CS1101S "Introduction to Data Structures"
 ```
 
-**Combine both (courses matching both criteria):**
+Combine term and course filters:
 
 ```shell
-$ canvas-downloader -t 115 -c CS1101S
+canvas-downloader -t 115 -c CS1101S
 ```
 
-The tool will show you all files to be downloaded with their sizes, then ask for confirmation before proceeding. Downloads are organized by course, preserving Canvas's folder structure.
+The tool shows the files that will be downloaded and their sizes before asking for confirmation.
 
-> **Note:** Course name matching is exact match - use the exact course code (e.g., "CS1101S") or the exact course name as shown in the discovery step.
+Course name matching is exact. Use the course code or course name exactly as shown by the discovery output.
 
 ## What Gets Downloaded
 
 - [x] Files
 - [x] Modules
-- [x] Syllabi (in HTML and JSON)
-- [x] Assignments (in HTML and JSON)
-- [x] Discussions and announcements (in HTML and JSON)
-- [x] Pages (in HTML and JSON)
-- [x] User information (in JSON)
-- [ ] Panopto lecture videos (seems still buggy)
+- [x] Syllabi in HTML and JSON
+- [x] Files embedded in syllabus HTML
+- [x] Assignments in HTML and JSON
+- [x] Discussions and announcements in HTML and JSON
+- [x] Pages in HTML and JSON
+- [x] User information in JSON
+- [ ] Panopto lecture videos (experimental)
+
+## Syllabus attachments
+
+Canvas syllabi can contain course files that are not otherwise exposed through the normal Files or Modules structure.
+
+`canvas-downloader` resolves embedded Canvas file references and queues them like ordinary course files.
+
+Supported syllabus references include:
+
+- `<a>` links to `/courses/<course_id>/files/<file_id>`
+- `<img>` preview URLs for Canvas course files
+
+Canvas file references are resolved through:
+
+```text
+/api/v1/files/<file_id>
+```
+
+This ensures the downloader uses the canonical Canvas filename, metadata, and download URL instead of saving preview URLs as files named `preview`.
+
+Repeated references to the same Canvas file in a single HTML body are de-duplicated before download.
+
+Embedded syllabus files are stored under a `syllabus/` directory next to `syllabus.html`.
+
+Example:
+
+```text
+Course/
+├── syllabus.html
+└── syllabus/
+    ├── lecture-1.pdf
+    ├── exercises.pdf
+    └── banner.png
+```
 
 ## Common Workflows
 
 ### Filter What You Download
 
-Create a `.canvasignore` file in your current directory to skip certain files using `.gitignore` syntax:
+Create a `.canvasignore` file in your current directory to skip files using `.gitignore` syntax:
 
-```shell
-# Ignore all videos
+```text
 *.mp4
 *.mov
 
-# Ignore specific courses
 /CS1101S/
 
-# Ignore lecture recordings folder
-lecture-recordings/
+/lecture-recordings/
 ```
 
-The tool automatically loads `.canvasignore` from the current directory if it exists. You can also specify a custom ignore file with `-i`:
+You can also specify another ignore file:
 
 ```shell
-$ canvas-downloader -t 115 -i custom-ignore.txt
+canvas-downloader -t 115 -i custom-ignore.txt
 ```
 
-See the [example file](examples/.canvasignore) for more patterns.
+See [examples/.canvasignore](examples/.canvasignore) for examples.
 
 ### Keep Your Files Updated
 
-Use `-n` to overwrite local files with newer versions from Canvas:
+Use `-n` to overwrite local files when Canvas reports a newer version:
 
 ```shell
-$ canvas-downloader -t 115 -n
+canvas-downloader -t 115 -n
 ```
 
-By default, existing local files won't be overwritten even if Canvas has newer versions.
+By default, existing local files are not overwritten.
+
+### Preview Changes
+
+Use `--dry-run` to inspect what would be downloaded without writing the queued files:
+
+```shell
+canvas-downloader -t 115 --dry-run
+```
 
 ### Choose Download Location
 
-Specify a custom folder with `-d`:
+Specify a custom destination with `-d`:
 
 ```shell
-$ canvas-downloader -t 115 -d ~/Canvas
+canvas-downloader -t 115 -d ~/Canvas
 ```
 
 ### See Debug Information
 
-Use `-v` to enable verbose output for troubleshooting:
+Use `-v` for verbose logging:
 
 ```shell
-# Enable debug logging
-$ canvas-downloader -t 115 -v
+canvas-downloader -t 115 -v
 ```
 
-Without `-v`, only important progress messages are shown (info level).
+Without `-v`, only important progress messages are shown.
 
 ## All Options
 
-```
+```text
 Usage: canvas-downloader [OPTIONS]
 
 Options:
