@@ -145,3 +145,7 @@ CLAUDE.md
 .vscode/
 
 bin/
+
+# Python tooling
+__pycache__/
+*.py[cod]
