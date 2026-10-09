@@ -29,7 +29,7 @@ DEFAULT_MIRROR = Path(
 )
 DEFAULT_TARGET = Path(
     r"C:\Users\Jaske\OneDrive - bvba Demunter\School\Thomas More"
-    r"\FASE_2_SSS\Vakken_v2"
+    r"\FASE_2_SSS\Vakken"
 )
 
 
@@ -361,6 +361,7 @@ def replace_managed_courses(
     operation_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     backups: list[tuple[Path, Path]] = []
     installed: list[Path] = []
+    preserved_local_files = 0
 
     try:
         for course in planner.COURSES:
@@ -370,6 +371,24 @@ def replace_managed_courses(
 
             target_course = target_root / course
             backup_course = target_root / f".{course}.backup-{operation_id}"
+
+            # Preserve the user-maintained local overlay across Canvas refreshes.
+            # `local/` is explicitly outside the managed Canvas output and may
+            # contain notes, Packet Tracer files, study context, or legacy
+            # reference material. The planner must never generate `local/`.
+            local_source = target_course / "local"
+            local_destination = source_course / "local"
+
+            if local_source.is_dir():
+                if local_destination.exists():
+                    raise RuntimeError(
+                        f"Managed output collides with preserved local overlay: "
+                        f"{local_destination}"
+                    )
+                shutil.copytree(local_source, local_destination, copy_function=shutil.copy2)
+                preserved_local_files += sum(
+                    1 for path in local_destination.rglob("*") if path.is_file()
+                )
 
             if backup_course.exists():
                 raise RuntimeError(f"Backup path already exists: {backup_course}")
@@ -399,12 +418,40 @@ def replace_managed_courses(
         raise
 
     else:
+        # Cleanup is best-effort only. OneDrive can temporarily hold handles on
+        # old folders after a rename/move. A cleanup failure must not turn an
+        # otherwise successful publish into a failed publish.
+        cleanup_failures = []
         for _target_course, backup_course in backups:
-            if backup_course.exists():
+            if not backup_course.exists():
+                continue
+            try:
                 shutil.rmtree(backup_course)
+            except OSError as exc:
+                cleanup_failures.append((backup_course, exc))
+
+        if cleanup_failures:
+            print()
+            print("WARNING: publish succeeded, but some old backup folders")
+            print("could not be removed because Windows/OneDrive still has them locked:")
+            for backup_course, exc in cleanup_failures:
+                print(f"  {backup_course}")
+                print(f"    {exc}")
+            print("These folders are old backups only and can be removed later.")
+
+    return preserved_local_files
 
 
-def print_summary(rows, refs, render_info, preview_root, *, apply, target):
+def print_summary(
+    rows,
+    refs,
+    render_info,
+    preview_root,
+    *,
+    apply,
+    target,
+    preserved_local_files=0,
+):
     status_counts = Counter(row.status for row in rows)
     ref_counts = Counter(ref.action for ref in refs)
 
@@ -415,6 +462,8 @@ def print_summary(rows, refs, render_info, preview_root, *, apply, target):
     print(f"Skipped source assets:  {status_counts.get('SKIPPED', 0)}")
     print(f"HTML -> Markdown:       {render_info['converted']}")
     print(f"Files copied as-is:     {render_info['copied']}")
+    if apply:
+        print(f"Local overlay preserved:{preserved_local_files:3}")
     print()
     print("Reference actions:")
     for action in sorted(ref_counts):
@@ -445,7 +494,7 @@ def main() -> int:
         "--target",
         type=Path,
         default=DEFAULT_TARGET,
-        help=f"OneDrive staging library [default: {DEFAULT_TARGET}]",
+        help=f"OneDrive course library [default: {DEFAULT_TARGET}]",
     )
     parser.add_argument(
         "--apply",
@@ -484,8 +533,9 @@ def main() -> int:
         verify_render(rows, preview_root)
         verify_markdown(preview_root)
 
+        preserved_local_files = 0
         if args.apply:
-            replace_managed_courses(
+            preserved_local_files = replace_managed_courses(
                 planner=planner,
                 rendered_root=preview_root,
                 target_root=args.target,
@@ -498,6 +548,7 @@ def main() -> int:
             preview_root,
             apply=args.apply,
             target=args.target,
+            preserved_local_files=preserved_local_files,
         )
 
     except Exception:
